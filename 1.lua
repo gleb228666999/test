@@ -30,6 +30,7 @@ end
 
 -- Запуск функции в отдельном потоке
 task.spawn(selectDevice)
+task.wait(10)
 loadstring(game:HttpGet('https://raw.smokingscripts.org/vertex.lua'))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ThatSick/HoneyLua/refs/heads/main/Loader.luau"))()
 
