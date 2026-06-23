@@ -3,10 +3,7 @@ local Shop = game.ReplicatedStorage.Remotes.Shop
 
 -- 📦 Список всех ящиков
 local boxes = {
-    "MysteryBox1", "MysteryBox2",
-    "KnifeBox1", "KnifeBox2", "KnifeBox3", "KnifeBox4", "KnifeBox5",
-    "GunBox1", "GunBox2", "GunBox3",
-    "MLG Box"
+    "KnifeBox1", "KnifeBox2", "KnifeBox3", "KnifeBox4", "KnifeBox5", "GunBox1", "GunBox3"
 }
 
 -- 💰 Валюты по приоритету
