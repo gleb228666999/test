@@ -1,40 +1,409 @@
-local VirtualInputManager = game:GetService("VirtualInputManager")
+setfpscap(25)
 
-local function selectDevice()
-    while task.wait(0.1) do
-        -- Ждём появления окна выбора устройства
-        local DeviceSelectGui = game.Players.LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("DeviceSelect")
+--[[
+Auto Farm Coins - MM2 | GUI ERROR RECONNECT
+- Скорость 20 studs/sec (постоянная)
+- Реконнект через GuiService.ErrorMessageChanged
+- NoClip ULTIMATE + Антигравитация
+- YOffset = -3
+]]
+
+-- ================= 🛠️ СЕРВИСЫ =================
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local TeleportService = game:GetService("TeleportService")
+local GuiService = game:GetService("GuiService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local PhysicsService = game:GetService("PhysicsService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= ⚙️ НАСТРОЙКИ =================
+local SETTINGS = {
+    Enabled = true,
+    MoveSpeed = 20,
+    CollectionRadius = 4.0,
+    LoopDelay = 0.1,
+    MaxBagCoins = 40,
+    AutoRespawn = true,
+    SpawnWaitTime = 2.0,
+    YOffset = -3,
+    ReconnectDelay = 2,
+}
+
+local MAX_IGNORED = 10
+local IGNORE_DUR = 3.0
+local isReconnecting = false
+
+-- ================= 🔌 РЕКОННЕКТ (GUI ERROR) =================
+local function forceReconnect(reason)
+    if isReconnecting then return end
+    isReconnecting = true
+    
+    print("🔌 Reconnecting: " .. tostring(reason))
+    
+    spawn(function()
+        wait(SETTINGS.ReconnectDelay)
+        local success = pcall(function()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        end)
         
-        if DeviceSelectGui then
-            local Container = DeviceSelectGui:WaitForChild("Container")
-            local Mouse = game.Players.LocalPlayer:GetMouse()
-            
-            -- Находим кнопку "Phone"
-            local button = Container:WaitForChild("Phone"):WaitForChild("Button")
-            
-            -- Вычисляем центр кнопки для клика
-            local buttonPos = button.AbsolutePosition
-            local buttonSize = button.AbsoluteSize
-            local centerX = buttonPos.X + buttonSize.X / 2
-            local centerY = buttonPos.Y + buttonSize.Y / 2
-            
-            -- Эмулируем нажатие мыши (down + up)
-            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
-            
-            -- Опционально: остановить цикл после успешного клика
-            -- break
+        if not success then
+            wait(2)
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId)
+            end)
+        end
+    end)
+    
+    while true do 
+        wait(1) 
+        if not LocalPlayer or not LocalPlayer.Parent then
+            break
         end
     end
 end
 
--- Запуск функции в отдельном потоке
-task.spawn(selectDevice)
-task.wait(10)
-loadstring(game:HttpGet('https://raw.smokingscripts.org/vertex.lua'))()
-loadstring(game:HttpGet('https://raw.githubusercontent.com/gleb228666999/test/refs/heads/main/2.lua'))()
+-- МЕТОД 1: GuiService.ErrorMessageChanged ✅
+GuiService.ErrorMessageChanged:Connect(function(errorMessage)
+    if errorMessage and errorMessage ~= "" then
+        forceReconnect("Error: " .. errorMessage)
+    end
+end)
 
+-- МЕТОД 2: PlayerRemoving
+Players.PlayerRemoving:Connect(function(player)
+    if player == LocalPlayer then
+        forceReconnect("PlayerRemoving")
+    end
+end)
 
+-- МЕТОД 3: OnTeleport
+LocalPlayer.OnTeleport:Connect(function(state)
+    if state == Enum.TeleportState.Failed or state == Enum.TeleportState.Started then
+        forceReconnect("OnTeleport: " .. tostring(state))
+    end
+end)
 
+-- МЕТОД 4: Heartbeat проверка
+local consecutiveFailures = 0
+RunService.Heartbeat:Connect(function()
+    if not LocalPlayer or not LocalPlayer.Parent then
+        consecutiveFailures = consecutiveFailures + 1
+        if consecutiveFailures >= 3 and not isReconnecting then
+            forceReconnect("Heartbeat: Player not found")
+        end
+    else
+        consecutiveFailures = 0
+    end
+end)
 
-setfpscap(25)
+-- ================= 🖱️ ВЫБОР УСТРОЙСТВА =================
+local function selectDevice()
+    while wait(0.1) do
+        local DeviceSelectGui = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("DeviceSelect")
+        if DeviceSelectGui then
+            local Container = DeviceSelectGui:WaitForChild("Container")
+            local button = Container:WaitForChild("Phone"):WaitForChild("Button")
+            local bp = button.AbsolutePosition
+            local bs = button.AbsoluteSize
+            VirtualInputManager:SendMouseButtonEvent(bp.X + bs.X/2, bp.Y + bs.Y/2, 0, true, game, 1)
+            wait(0.1)
+            VirtualInputManager:SendMouseButtonEvent(bp.X + bs.X/2, bp.Y + bs.Y/2, 0, false, game, 1)
+            break
+        end
+    end
+end
+spawn(selectDevice)
+wait(10)
+
+-- ================= 🔄 СОСТОЯНИЕ =================
+local isRoundActive = false
+local collectedCoins = {}
+local currentTween = nil
+local isMoving = false
+
+-- ================= 🚫 NOCLIP ULTIMATE + АНТИГРАВИТАЦИЯ =================
+local noclipActive = false
+local antiGravForce = nil
+
+local function setupAntiGravity(hrp)
+    if antiGravForce then pcall(function() antiGravForce:Destroy() end) end
+    
+    local att = hrp:FindFirstChild("AntiGravAttachment")
+    if not att then
+        att = Instance.new("Attachment")
+        att.Name = "AntiGravAttachment"
+        att.Parent = hrp
+    end
+    
+    local vf = Instance.new("VectorForce")
+    vf.Name = "AntiGravity"
+    vf.Attachment0 = att
+    vf.Force = Vector3.new(0, hrp.AssemblyMass * 196.2, 0)
+    vf.RelativeTo = Enum.ActuatorRelativeTo.World
+    vf.ApplyAtCenterOfMass = true
+    vf.Parent = hrp
+    
+    antiGravForce = vf
+end
+
+local function removeAntiGravity()
+    if antiGravForce then pcall(function() antiGravForce:Destroy() end); antiGravForce = nil end
+end
+
+local function applyUltimateNoClip(character)
+    if not character then return end
+    
+    pcall(function()
+        PhysicsService:RegisterCollisionGroup("UltimateNC")
+        PhysicsService:CollisionGroupSetCollidable("UltimateNC", "Default", false)
+    end)
+    
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.PlatformStand = true
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Physics) end)
+        for _, state in ipairs({
+            Enum.HumanoidStateType.GettingUp, Enum.HumanoidStateType.FallingDown,
+            Enum.HumanoidStateType.Ragdoll, Enum.HumanoidStateType.Freefall,
+            Enum.HumanoidStateType.Jumping, Enum.HumanoidStateType.Landed,
+            Enum.HumanoidStateType.Running, Enum.HumanoidStateType.RunningNoPhysics,
+            Enum.HumanoidStateType.Seated, Enum.HumanoidStateType.Swimming,
+        }) do pcall(function() hum:SetStateEnabled(state, false) end) end
+    end
+    
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+            part.Massless = true
+            pcall(function() part.CollisionGroup = "UltimateNC" end)
+        end
+    end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if hrp and not antiGravForce then setupAntiGravity(hrp) end
+end
+
+local function enableNoClip() if noclipActive then return end; noclipActive = true end
+
+local function disableNoClip()
+    if not noclipActive then return end
+    noclipActive = false
+    
+    if currentTween then pcall(function() currentTween:Cancel() end); currentTween = nil end
+    isMoving = false
+    removeAntiGravity()
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.PlatformStand = false
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        for _, state in ipairs({
+            Enum.HumanoidStateType.GettingUp, Enum.HumanoidStateType.FallingDown,
+            Enum.HumanoidStateType.Ragdoll, Enum.HumanoidStateType.Freefall,
+            Enum.HumanoidStateType.Jumping, Enum.HumanoidStateType.Landed,
+            Enum.HumanoidStateType.Running, Enum.HumanoidStateType.RunningNoPhysics,
+            Enum.HumanoidStateType.Seated, Enum.HumanoidStateType.Swimming,
+        }) do pcall(function() hum:SetStateEnabled(state, true) end) end
+    end
+    
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = true
+            part.Massless = false
+            pcall(function() part.CollisionGroup = "Default" end)
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if noclipActive then
+        pcall(function()
+            applyUltimateNoClip(LocalPlayer.Character)
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and antiGravForce then
+                antiGravForce.Force = Vector3.new(0, hrp.AssemblyMass * 196.2, 0)
+            end
+        end)
+    end
+end)
+
+-- ================= 📡 ОБНАРУЖЕНИЕ РАУНДА =================
+local function setupRoundDetection()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local gameplay = remotes and remotes:FindFirstChild("Gameplay")
+    local roundStart = gameplay and gameplay:FindFirstChild("RoundStart")
+
+    if roundStart and roundStart:IsA("RemoteEvent") then
+        roundStart.OnClientEvent:Connect(function()
+            isRoundActive = true
+            enableNoClip()
+        end)
+    else
+        delay(3, function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                isRoundActive = true
+                enableNoClip()
+            end
+        end)
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    isRoundActive = false
+    disableNoClip()
+    
+    wait(1)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Died:Connect(function() isRoundActive = false; disableNoClip() end)
+    end
+end)
+
+-- ================= 🛠️ ВСПОМОГАТЕЛЬНЫЕ =================
+local function getHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getBagCoins()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return 0 end
+    local function sf(p, n) return p and p:FindFirstChild(n) end
+    local obj = sf(sf(sf(sf(sf(sf(sf(playerGui, "MainGUI"), "Game"), "CoinBags"), "Container"), "Coin"), "CurrencyFrame"), "Icon")
+    obj = obj and obj:FindFirstChild("Coins")
+    if not obj then return 0 end
+    local text = obj:IsA("TextLabel") and obj.Text or ""
+    return tonumber(string.match(text, "%d+") or "0") or 0
+end
+
+local function forceRespawn()
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then pcall(function() hum.Health = 0 end) end
+    end
+end
+
+-- ================= 🪙 ИГНОР МОНЕТ =================
+local function isCollected(coin)
+    local now = tick()
+    for _, d in ipairs(collectedCoins) do if d.coin == coin and now < d.time + IGNORE_DUR then return true end end
+    return false
+end
+
+local function markCollected(coin)
+    table.insert(collectedCoins, {coin = coin, time = tick()})
+    if #collectedCoins > MAX_IGNORED then table.remove(collectedCoins, 1) end
+end
+
+local function getNearestCoin(map, hrp)
+    if not map or not hrp then return nil, math.huge end
+    local container = map:FindFirstChild("CoinContainer")
+    if not container then return nil, math.huge end
+    local target, minDist = nil, math.huge
+    for _, part in next, container:GetChildren() do
+        if not part:IsA("BasePart") then continue end
+        if not part.Name:lower():find("coin") then continue end
+        if isCollected(part) then continue end
+        local dist = (part.Position - hrp.Position).Magnitude
+        if dist < minDist then minDist = dist; target = part end
+    end
+    return target, minDist
+end
+
+-- ================= 🎯 TWEEN =================
+local function tweenToTarget(hrp, targetPos)
+    if currentTween then pcall(function() currentTween:Cancel() end) end
+    
+    local dist = (targetPos - hrp.Position).Magnitude
+    local moveTime = math.max(dist / SETTINGS.MoveSpeed, 0.1)
+    
+    local tweenInfo = TweenInfo.new(moveTime, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    currentTween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(targetPos)})
+    isMoving = true
+    
+    currentTween.Completed:Connect(function() isMoving = false; currentTween = nil end)
+    currentTween:Play()
+end
+
+-- ================= 🛡️ ANTI-AFK =================
+spawn(function()
+    while wait(120) do
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(math.random(100, 800), math.random(100, 600)))
+        end)
+    end
+end)
+
+-- ================= 🚀 ГЛАВНЫЙ ЦИКЛ =================
+setupRoundDetection()
+
+local coinCounter = 0
+local lastTarget = nil
+
+spawn(function()
+    print("✅ AUTO FARM ACTIVE | Speed: " .. SETTINGS.MoveSpeed .. " | YOffset: " .. SETTINGS.YOffset)
+    print("🔌 Auto-Reconnect: GuiService + PlayerRemoving + Heartbeat")
+    print("")
+    
+    while SETTINGS.Enabled do
+        pcall(function()
+            if not isRoundActive then wait(1) return end
+
+            local hrp = getHRP()
+            if not hrp then wait(1) return end
+
+            if hrp.Position.Y < -50 then
+                if currentTween then currentTween:Cancel(); currentTween = nil end
+                isMoving = false
+                hrp.CFrame = CFrame.new(hrp.Position.X, 50, hrp.Position.Z)
+                wait(2)
+                return
+            end
+
+            local currentBag = getBagCoins()
+            if currentBag >= SETTINGS.MaxBagCoins then
+                if currentTween then currentTween:Cancel(); currentTween = nil end
+                isMoving = false
+                if SETTINGS.AutoRespawn then
+                    wait(0.3); forceRespawn(); wait(SETTINGS.SpawnWaitTime)
+                end
+                return
+            end
+
+            local map
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:FindFirstChild("CoinContainer") then map = obj; break end
+            end
+            if not map then wait(SETTINGS.LoopDelay); return end
+
+            local coin, dist = getNearestCoin(map, hrp)
+            
+            if not coin then lastTarget = nil; wait(SETTINGS.LoopDelay); return end
+
+            local targetPos = Vector3.new(coin.Position.X, coin.Position.Y + SETTINGS.YOffset, coin.Position.Z)
+
+            if dist <= SETTINGS.CollectionRadius then
+                markCollected(coin)
+                lastTarget = nil
+                coinCounter = coinCounter + 1
+                return
+            end
+
+            if not isMoving or lastTarget ~= coin then
+                lastTarget = coin
+                tweenToTarget(hrp, targetPos)
+            end
+        end)
+        
+        wait(SETTINGS.LoopDelay)
+    end
+end)
