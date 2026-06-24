@@ -1,9 +1,8 @@
 setfpscap(25)
+
 --[[
-Auto Farm + Auto Crate Open - MM2 | FIXED RESPAWN
-- Фарм монет (скорость 20 studs/sec)
-- АВТО-ОТКРЫТИЕ КЕЙСОВ когда баланс >= 1000 монет
-- ИСПРАВЛЕННЫЙ РЕСПАВН после полного мешка
+Auto Farm Coins - MM2 | GUI ERROR RECONNECT
+- Скорость 20 studs/sec (постоянная)
 - Реконнект через GuiService.ErrorMessageChanged
 - NoClip ULTIMATE + Антигравитация
 - YOffset = -3
@@ -29,77 +28,16 @@ local SETTINGS = {
     LoopDelay = 0.1,
     MaxBagCoins = 40,
     AutoRespawn = true,
-    SpawnWaitTime = 3.0,  -- Увеличил до 3 сек
-    YOffset = -2,
+    SpawnWaitTime = 2.0,
+    YOffset = -3,
     ReconnectDelay = 2,
-    
-    -- 📦 АВТО-КЕЙСЫ
-    AutoOpenCrates = true,
-    CrateCheckDelay = 3,
-    CrateOpenDelay = 2.5,
-    MinCoinsForCrate = 1000,
 }
 
 local MAX_IGNORED = 10
 local IGNORE_DUR = 3.0
 local isReconnecting = false
-local isRespawning = false  -- Флаг респавна
 
--- ================= 📦 СПИСКИ ДЛЯ КЕЙСОВ =================
-local CRATE_BOXES = {
-    "MysteryBox1", "MysteryBox2",
-    "KnifeBox1", "KnifeBox2", "KnifeBox3", "KnifeBox4", "KnifeBox5",
-    "GunBox1", "GunBox2", "GunBox3",
-    "MLG Box"
-}
-
--- ================= 📊 ПЕРЕМЕННЫЕ =================
-local totalCratesOpened = 0
-local isOpengingCrate = false
-
--- Remote'ы для открытия
-local Shop = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Shop")
-local OpenCrate = Shop:WaitForChild("OpenCrate")
-local BoxController = Shop:WaitForChild("BoxController")
-
--- ================= 💰 ПОЛУЧЕНИЕ РЕАЛЬНОГО БАЛАНСА =================
-local function getRealCoinsBalance()
-    local ok, coins = pcall(function()
-        local ProfileData = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("ProfileData"))
-        local owned = ProfileData.Materials and ProfileData.Materials.Owned
-        if owned and owned.Coins then
-            return owned.Coins
-        end
-        owned = ProfileData.Weapons and ProfileData.Weapons.Owned
-        if owned and owned.Coins then
-            return owned.Coins
-        end
-        return 0
-    end)
-    
-    if ok and coins and coins > 0 then
-        return coins
-    end
-    
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        local function sf(p, n) return p and p:FindFirstChild(n) end
-        local coinsObj = sf(sf(sf(sf(sf(sf(sf(playerGui, "MainGUI"), "Game"), "CoinBags"), "Container"), "Coin"), "CurrencyFrame"), "Icon")
-        coinsObj = coinsObj and coinsObj:FindFirstChild("Coins")
-        
-        if coinsObj then
-            local text = coinsObj:IsA("TextLabel") and coinsObj.Text or ""
-            local value = tonumber(string.match(text, "%d+") or "0") or 0
-            if value > 0 then
-                return value
-            end
-        end
-    end
-    
-    return 0
-end
-
--- ================= 🔌 РЕКОННЕКТ =================
+-- ================= 🔌 РЕКОННЕКТ (GUI ERROR) =================
 local function forceReconnect(reason)
     if isReconnecting then return end
     isReconnecting = true
@@ -108,35 +46,48 @@ local function forceReconnect(reason)
     
     spawn(function()
         wait(SETTINGS.ReconnectDelay)
-        pcall(function()
+        local success = pcall(function()
             TeleportService:Teleport(game.PlaceId, LocalPlayer)
         end)
+        
+        if not success then
+            wait(2)
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId)
+            end)
+        end
     end)
     
     while true do 
         wait(1) 
-        if not LocalPlayer or not LocalPlayer.Parent then break end
+        if not LocalPlayer or not LocalPlayer.Parent then
+            break
+        end
     end
 end
 
+-- МЕТОД 1: GuiService.ErrorMessageChanged ✅
 GuiService.ErrorMessageChanged:Connect(function(errorMessage)
     if errorMessage and errorMessage ~= "" then
         forceReconnect("Error: " .. errorMessage)
     end
 end)
 
+-- МЕТОД 2: PlayerRemoving
 Players.PlayerRemoving:Connect(function(player)
     if player == LocalPlayer then
         forceReconnect("PlayerRemoving")
     end
 end)
 
+-- МЕТОД 3: OnTeleport
 LocalPlayer.OnTeleport:Connect(function(state)
     if state == Enum.TeleportState.Failed or state == Enum.TeleportState.Started then
         forceReconnect("OnTeleport: " .. tostring(state))
     end
 end)
 
+-- МЕТОД 4: Heartbeat проверка
 local consecutiveFailures = 0
 RunService.Heartbeat:Connect(function()
     if not LocalPlayer or not LocalPlayer.Parent then
@@ -304,37 +255,14 @@ local function setupRoundDetection()
     end
 end
 
--- ================= 🔄 ИСПРАВЛЕННЫЙ РЕСПАВН =================
 LocalPlayer.CharacterAdded:Connect(function(char)
-    print("🔄 CharacterAdded: новый персонаж создан")
-    
-    -- Сбрасываем состояние
     isRoundActive = false
     disableNoClip()
-    isRespawning = false
     
-    -- Ждём полной загрузки персонажа
-    wait(2)
-    
-    -- Проверяем Humanoid
-    local hum = char:WaitForChild("Humanoid", 5)
+    wait(1)
+    local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
-        print("✅ Humanoid найден, подключаем Died event")
-        
-        hum.Died:Connect(function()
-            print("💀 Персонаж умер")
-            isRoundActive = false
-            disableNoClip()
-        end)
-        
-        -- Автоматически включаем NoClip если раунд активен
-        if isRoundActive then
-            wait(0.5)
-            enableNoClip()
-            print("🚫 NoClip включён после респавна")
-        end
-    else
-        warn("⚠️ Humanoid не найден!")
+        hum.Died:Connect(function() isRoundActive = false; disableNoClip() end)
     end
 end)
 
@@ -355,66 +283,12 @@ local function getBagCoins()
     return tonumber(string.match(text, "%d+") or "0") or 0
 end
 
--- ИСПРАВЛЕННАЯ ФУНКЦИЯ РЕСПАВНА
 local function forceRespawn()
-    if isRespawning then
-        print("⏳ Респавн уже в процессе...")
-        return
-    end
-    
-    isRespawning = true
-    print("💀 Запуск респавна...")
-    
     local char = LocalPlayer.Character
-    if not char then
-        print("❌ Персонаж не найден!")
-        isRespawning = false
-        return
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then pcall(function() hum.Health = 0 end) end
     end
-    
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then
-        print("❌ Humanoid не найден!")
-        isRespawning = false
-        return
-    end
-    
-    -- Останавливаем tween
-    if currentTween then
-        pcall(function() currentTween:Cancel() end)
-        currentTween = nil
-    end
-    isMoving = false
-    
-    -- Убиваем персонажа
-    if hum.Health > 0 then
-        print("💀 Убиваю персонажа (Health = 0)")
-        pcall(function() hum.Health = 0 end)
-    end
-    
-    -- Ждём респавна
-    print("⏳ Ожидание респавна (" .. SETTINGS.SpawnWaitTime .. " сек)...")
-    wait(SETTINGS.SpawnWaitTime)
-    
-    -- Проверяем, появился ли новый персонаж
-    local newChar = LocalPlayer.Character
-    if newChar and newChar ~= char then
-        print("✅ Новый персонаж появился!")
-        
-        -- Ждём HRP
-        local hrp = newChar:WaitForChild("HumanoidRootPart", 5)
-        if hrp then
-            print("✅ HRP найден, включаю NoClip")
-            enableNoClip()
-        else
-            warn("⚠️ HRP не найден после респавна!")
-        end
-    else
-        warn("⚠️ Новый персонаж не появился!")
-    end
-    
-    isRespawning = false
-    print("✅ Респавн завершён")
 end
 
 -- ================= 🪙 ИГНОР МОНЕТ =================
@@ -459,55 +333,6 @@ local function tweenToTarget(hrp, targetPos)
     currentTween:Play()
 end
 
--- ================= 📦 АВТО-ОТКРЫТИЕ КЕЙСОВ =================
-local function openRandomCrate()
-    if isOpengingCrate then return false end
-    isOpengingCrate = true
-    
-    local boxId = CRATE_BOXES[math.random(1, #CRATE_BOXES)]
-    local success = false
-    
-    local ok, result = pcall(function()
-        return OpenCrate:InvokeServer(boxId, "MysteryBox", "Coins")
-    end)
-    
-    if ok and result then
-        pcall(function()
-            BoxController:Fire({{
-                MysteryBoxId = boxId,
-                RewardedItemId = result
-            }})
-        end)
-        print(string.format("📦 [CRATE] %s | Выпало: %s", boxId, tostring(result)))
-        success = true
-    end
-    
-    isOpengingCrate = false
-    return success
-end
-
-local function autoCrateLoop()
-    print("📦 Auto-Crate Monitor запущен")
-    
-    while SETTINGS.AutoOpenCrates and SETTINGS.Enabled do
-        wait(SETTINGS.CrateCheckDelay)
-        
-        local balance = getRealCoinsBalance()
-        
-        if balance >= SETTINGS.MinCoinsForCrate then
-            print(string.format("💰 Баланс: %d монет → Открываю кейс!", balance))
-            
-            local success = openRandomCrate()
-            
-            if success then
-                totalCratesOpened = totalCratesOpened + 1
-                print(string.format("📊 Всего открыто: %d кейсов", totalCratesOpened))
-                wait(SETTINGS.CrateOpenDelay)
-            end
-        end
-    end
-end
-
 -- ================= 🛡️ ANTI-AFK =================
 spawn(function()
     while wait(120) do
@@ -518,18 +343,15 @@ spawn(function()
     end
 end)
 
--- ================= 🚀 ЗАПУСК =================
+-- ================= 🚀 ГЛАВНЫЙ ЦИКЛ =================
 setupRoundDetection()
-spawn(autoCrateLoop)
 
 local coinCounter = 0
 local lastTarget = nil
 
 spawn(function()
-    print("✅ AUTO FARM + AUTO CRATE + FIXED RESPAWN ACTIVE")
-    print("   Speed: " .. SETTINGS.MoveSpeed .. " | YOffset: " .. SETTINGS.YOffset)
-    print("   📦 Авто-кейсы: при балансе >= " .. SETTINGS.MinCoinsForCrate .. " монет")
-    print("   💀 Респавн: после " .. SETTINGS.MaxBagCoins .. " монет в мешке")
+    print("✅ AUTO FARM ACTIVE | Speed: " .. SETTINGS.MoveSpeed .. " | YOffset: " .. SETTINGS.YOffset)
+    print("🔌 Auto-Reconnect: GuiService + PlayerRemoving + Heartbeat")
     print("")
     
     while SETTINGS.Enabled do
@@ -548,15 +370,12 @@ spawn(function()
             end
 
             local currentBag = getBagCoins()
-            
-            -- ИСПРАВЛЕННАЯ ЛОГИКА РЕСПАВНА
-            if currentBag >= SETTINGS.MaxBagCoins and SETTINGS.AutoRespawn and not isRespawning then
-                print("🎒 МЕШОК ПОЛНЫЙ (" .. currentBag .. "/" .. SETTINGS.MaxBagCoins .. ") → РЕСПАВН!")
-                
+            if currentBag >= SETTINGS.MaxBagCoins then
                 if currentTween then currentTween:Cancel(); currentTween = nil end
                 isMoving = false
-                
-                forceRespawn()
+                if SETTINGS.AutoRespawn then
+                    wait(0.3); forceRespawn(); wait(SETTINGS.SpawnWaitTime)
+                end
                 return
             end
 
