@@ -1,8 +1,9 @@
 setfpscap(25)
 --[[
-Auto Farm + Auto Crate Open - MM2 | FINAL BUILD
+Auto Farm + Auto Crate Open - MM2 | FIXED RESPAWN
 - Фарм монет (скорость 20 studs/sec)
 - АВТО-ОТКРЫТИЕ КЕЙСОВ когда баланс >= 1000 монет
+- ИСПРАВЛЕННЫЙ РЕСПАВН после полного мешка
 - Реконнект через GuiService.ErrorMessageChanged
 - NoClip ULTIMATE + Антигравитация
 - YOffset = -3
@@ -28,20 +29,21 @@ local SETTINGS = {
     LoopDelay = 0.1,
     MaxBagCoins = 40,
     AutoRespawn = true,
-    SpawnWaitTime = 2.0,
-    YOffset = -2,
+    SpawnWaitTime = 3.0,  -- Увеличил до 3 сек
+    YOffset = -3,
     ReconnectDelay = 2,
     
     -- 📦 АВТО-КЕЙСЫ
     AutoOpenCrates = true,
-    CrateCheckDelay = 3,       -- Проверка баланса каждые 3 сек
-    CrateOpenDelay = 2.5,      -- Задержка между открытиями (защита от кика)
-    MinCoinsForCrate = 1000,   -- Минимум монет для открытия кейса
+    CrateCheckDelay = 3,
+    CrateOpenDelay = 2.5,
+    MinCoinsForCrate = 1000,
 }
 
 local MAX_IGNORED = 10
 local IGNORE_DUR = 3.0
 local isReconnecting = false
+local isRespawning = false  -- Флаг респавна
 
 -- ================= 📦 СПИСКИ ДЛЯ КЕЙСОВ =================
 local CRATE_BOXES = {
@@ -62,7 +64,6 @@ local BoxController = Shop:WaitForChild("BoxController")
 
 -- ================= 💰 ПОЛУЧЕНИЕ РЕАЛЬНОГО БАЛАНСА =================
 local function getRealCoinsBalance()
-    -- Способ 1: Через ProfileData (самый точный)
     local ok, coins = pcall(function()
         local ProfileData = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("ProfileData"))
         local owned = ProfileData.Materials and ProfileData.Materials.Owned
@@ -80,7 +81,6 @@ local function getRealCoinsBalance()
         return coins
     end
     
-    -- Способ 2: Через UI (фоллбэк)
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
     if playerGui then
         local function sf(p, n) return p and p:FindFirstChild(n) end
@@ -304,14 +304,37 @@ local function setupRoundDetection()
     end
 end
 
+-- ================= 🔄 ИСПРАВЛЕННЫЙ РЕСПАВН =================
 LocalPlayer.CharacterAdded:Connect(function(char)
+    print("🔄 CharacterAdded: новый персонаж создан")
+    
+    -- Сбрасываем состояние
     isRoundActive = false
     disableNoClip()
+    isRespawning = false
     
-    wait(1)
-    local hum = char:FindFirstChildOfClass("Humanoid")
+    -- Ждём полной загрузки персонажа
+    wait(2)
+    
+    -- Проверяем Humanoid
+    local hum = char:WaitForChild("Humanoid", 5)
     if hum then
-        hum.Died:Connect(function() isRoundActive = false; disableNoClip() end)
+        print("✅ Humanoid найден, подключаем Died event")
+        
+        hum.Died:Connect(function()
+            print("💀 Персонаж умер")
+            isRoundActive = false
+            disableNoClip()
+        end)
+        
+        -- Автоматически включаем NoClip если раунд активен
+        if isRoundActive then
+            wait(0.5)
+            enableNoClip()
+            print("🚫 NoClip включён после респавна")
+        end
+    else
+        warn("⚠️ Humanoid не найден!")
     end
 end)
 
@@ -332,12 +355,66 @@ local function getBagCoins()
     return tonumber(string.match(text, "%d+") or "0") or 0
 end
 
+-- ИСПРАВЛЕННАЯ ФУНКЦИЯ РЕСПАВНА
 local function forceRespawn()
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then pcall(function() hum.Health = 0 end) end
+    if isRespawning then
+        print("⏳ Респавн уже в процессе...")
+        return
     end
+    
+    isRespawning = true
+    print("💀 Запуск респавна...")
+    
+    local char = LocalPlayer.Character
+    if not char then
+        print("❌ Персонаж не найден!")
+        isRespawning = false
+        return
+    end
+    
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        print("❌ Humanoid не найден!")
+        isRespawning = false
+        return
+    end
+    
+    -- Останавливаем tween
+    if currentTween then
+        pcall(function() currentTween:Cancel() end)
+        currentTween = nil
+    end
+    isMoving = false
+    
+    -- Убиваем персонажа
+    if hum.Health > 0 then
+        print("💀 Убиваю персонажа (Health = 0)")
+        pcall(function() hum.Health = 0 end)
+    end
+    
+    -- Ждём респавна
+    print("⏳ Ожидание респавна (" .. SETTINGS.SpawnWaitTime .. " сек)...")
+    wait(SETTINGS.SpawnWaitTime)
+    
+    -- Проверяем, появился ли новый персонаж
+    local newChar = LocalPlayer.Character
+    if newChar and newChar ~= char then
+        print("✅ Новый персонаж появился!")
+        
+        -- Ждём HRP
+        local hrp = newChar:WaitForChild("HumanoidRootPart", 5)
+        if hrp then
+            print("✅ HRP найден, включаю NoClip")
+            enableNoClip()
+        else
+            warn("⚠️ HRP не найден после респавна!")
+        end
+    else
+        warn("⚠️ Новый персонаж не появился!")
+    end
+    
+    isRespawning = false
+    print("✅ Респавн завершён")
 end
 
 -- ================= 🪙 ИГНОР МОНЕТ =================
@@ -382,7 +459,7 @@ local function tweenToTarget(hrp, targetPos)
     currentTween:Play()
 end
 
--- ================= 📦 АВТО-ОТКРЫТИЕ КЕЙСОВ (КОГДА БАЛАНС >= 1000) =================
+-- ================= 📦 АВТО-ОТКРЫТИЕ КЕЙСОВ =================
 local function openRandomCrate()
     if isOpengingCrate then return false end
     isOpengingCrate = true
@@ -390,7 +467,6 @@ local function openRandomCrate()
     local boxId = CRATE_BOXES[math.random(1, #CRATE_BOXES)]
     local success = false
     
-    -- Пробуем только Coins (т.к. мы проверяли баланс в Coins)
     local ok, result = pcall(function()
         return OpenCrate:InvokeServer(boxId, "MysteryBox", "Coins")
     end)
@@ -410,26 +486,22 @@ local function openRandomCrate()
     return success
 end
 
--- Главный цикл авто-кейсов
 local function autoCrateLoop()
-    print("📦 Auto-Crate Monitor запущен (проверка каждые " .. SETTINGS.CrateCheckDelay .. " сек)")
+    print("📦 Auto-Crate Monitor запущен")
     
     while SETTINGS.AutoOpenCrates and SETTINGS.Enabled do
         wait(SETTINGS.CrateCheckDelay)
         
-        -- Получаем РЕАЛЬНЫЙ баланс
         local balance = getRealCoinsBalance()
         
         if balance >= SETTINGS.MinCoinsForCrate then
-            print(string.format("💰 Баланс: %d монет (>= %d) → Открываю кейс!", balance, SETTINGS.MinCoinsForCrate))
+            print(string.format("💰 Баланс: %d монет → Открываю кейс!", balance))
             
             local success = openRandomCrate()
             
             if success then
                 totalCratesOpened = totalCratesOpened + 1
                 print(string.format("📊 Всего открыто: %d кейсов", totalCratesOpened))
-                
-                -- Задержка между открытиями
                 wait(SETTINGS.CrateOpenDelay)
             end
         end
@@ -448,18 +520,16 @@ end)
 
 -- ================= 🚀 ЗАПУСК =================
 setupRoundDetection()
-
--- Запускаем поток авто-кейсов
 spawn(autoCrateLoop)
 
 local coinCounter = 0
 local lastTarget = nil
 
 spawn(function()
-    print("✅ AUTO FARM + AUTO CRATE ACTIVE")
+    print("✅ AUTO FARM + AUTO CRATE + FIXED RESPAWN ACTIVE")
     print("   Speed: " .. SETTINGS.MoveSpeed .. " | YOffset: " .. SETTINGS.YOffset)
     print("   📦 Авто-кейсы: при балансе >= " .. SETTINGS.MinCoinsForCrate .. " монет")
-    print("   🔌 Auto-Reconnect: активен")
+    print("   💀 Респавн: после " .. SETTINGS.MaxBagCoins .. " монет в мешке")
     print("")
     
     while SETTINGS.Enabled do
@@ -478,12 +548,15 @@ spawn(function()
             end
 
             local currentBag = getBagCoins()
-            if currentBag >= SETTINGS.MaxBagCoins then
+            
+            -- ИСПРАВЛЕННАЯ ЛОГИКА РЕСПАВНА
+            if currentBag >= SETTINGS.MaxBagCoins and SETTINGS.AutoRespawn and not isRespawning then
+                print("🎒 МЕШОК ПОЛНЫЙ (" .. currentBag .. "/" .. SETTINGS.MaxBagCoins .. ") → РЕСПАВН!")
+                
                 if currentTween then currentTween:Cancel(); currentTween = nil end
                 isMoving = false
-                if SETTINGS.AutoRespawn then
-                    wait(0.3); forceRespawn(); wait(SETTINGS.SpawnWaitTime)
-                end
+                
+                forceRespawn()
                 return
             end
 
