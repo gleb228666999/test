@@ -1,41 +1,9 @@
-local VirtualInputManager = game:GetService("VirtualInputManager")
-
-local function selectDevice()
-    while task.wait(0.1) do
-        -- Ждём появления окна выбора устройства
-        local DeviceSelectGui = game.Players.LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("DeviceSelect")
-
-        if DeviceSelectGui then
-            local Container = DeviceSelectGui:WaitForChild("Container")
-            local Mouse = game.Players.LocalPlayer:GetMouse()
-
-            -- Находим кнопку "Phone"
-            local button = Container:WaitForChild("Phone"):WaitForChild("Button")
-
-            -- Вычисляем центр кнопки для клика
-            local buttonPos = button.AbsolutePosition
-            local buttonSize = button.AbsoluteSize
-            local centerX = buttonPos.X + buttonSize.X / 2
-            local centerY = buttonPos.Y + buttonSize.Y / 2
-
-            -- Эмулируем нажатие мыши (down + up)
-            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
-
-            -- Опционально: остановить цикл после успешного клика
-            -- break
-        end
-    end
-end
-
--- Запуск функции в отдельном потоке
-task.spawn(selectDevice)
 setfpscap(25)
-loadstring(game:HttpGet('https://raw.githubusercontent.com/gleb228666999/test/refs/heads/main/2.lua'))()
 
 --[[
-Auto Farm Coins - MM2 | GUI ERROR RECONNECT
-- Скорость 20 studs/sec (постоянная)
+Auto Farm + Auto Crate Open - MM2 | ULTIMATE BUILD
+- Фарм монет (скорость 20 studs/sec)
+- АВТО-ОТКРЫТИЕ КЕЙСОВ при 1000+ монет
 - Реконнект через GuiService.ErrorMessageChanged
 - NoClip ULTIMATE + Антигравитация
 - YOffset = -3
@@ -64,11 +32,36 @@ local SETTINGS = {
     SpawnWaitTime = 2.0,
     YOffset = -3,
     ReconnectDelay = 2,
+    
+    -- 📦 АВТО-КЕЙСЫ
+    AutoOpenCrates = true,
+    CrateOpenDelay = 2.5,      -- Задержка между открытиями (защита от кика)
+    MinCoinsForCrate = 1000,   -- Сколько монет нужно для открытия
 }
 
 local MAX_IGNORED = 10
 local IGNORE_DUR = 3.0
 local isReconnecting = false
+
+-- ================= 📦 СПИСКИ ДЛЯ КЕЙСОВ =================
+local CRATE_BOXES = {
+    "MysteryBox1", "MysteryBox2",
+    "KnifeBox1", "KnifeBox2", "KnifeBox3", "KnifeBox4", "KnifeBox5",
+    "GunBox1", "GunBox2", "GunBox3",
+    "MLG Box"
+}
+
+local CRATE_CURRENCIES = {"Coins", "Gems", "Key"}
+
+-- ================= 📊 СЧЁТЧИК МОНЕТ =================
+local depositedCoins = 0       -- Монеты, которые уже сданы (через респавн)
+local totalCratesOpened = 0    -- Всего открытых кейсов
+local isOpengingCrate = false  -- Флаг открытия кейса
+
+-- Remote'ы для открытия
+local Shop = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Shop")
+local OpenCrate = Shop:WaitForChild("OpenCrate")
+local BoxController = Shop:WaitForChild("BoxController")
 
 -- ================= 🔌 РЕКОННЕКТ (GUI ERROR) =================
 local function forceReconnect(reason)
@@ -99,28 +92,28 @@ local function forceReconnect(reason)
     end
 end
 
--- МЕТОД 1: GuiService.ErrorMessageChanged ✅
+-- Метод 1: GuiService.ErrorMessageChanged ✅
 GuiService.ErrorMessageChanged:Connect(function(errorMessage)
     if errorMessage and errorMessage ~= "" then
         forceReconnect("Error: " .. errorMessage)
     end
 end)
 
--- МЕТОД 2: PlayerRemoving
+-- Метод 2: PlayerRemoving
 Players.PlayerRemoving:Connect(function(player)
     if player == LocalPlayer then
         forceReconnect("PlayerRemoving")
     end
 end)
 
--- МЕТОД 3: OnTeleport
+-- Метод 3: OnTeleport
 LocalPlayer.OnTeleport:Connect(function(state)
     if state == Enum.TeleportState.Failed or state == Enum.TeleportState.Started then
         forceReconnect("OnTeleport: " .. tostring(state))
     end
 end)
 
--- МЕТОД 4: Heartbeat проверка
+-- Метод 4: Heartbeat проверка
 local consecutiveFailures = 0
 RunService.Heartbeat:Connect(function()
     if not LocalPlayer or not LocalPlayer.Parent then
@@ -320,7 +313,14 @@ local function forceRespawn()
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then pcall(function() hum.Health = 0 end) end
+        if hum and hum.Health > 0 then
+            -- Сохраняем монеты в общий баланс перед респавном
+            local currentBag = getBagCoins()
+            if currentBag > 0 then
+                depositedCoins = depositedCoins + currentBag
+            end
+            pcall(function() hum.Health = 0 end)
+        end
     end
 end
 
@@ -366,6 +366,63 @@ local function tweenToTarget(hrp, targetPos)
     currentTween:Play()
 end
 
+-- ================= 📦 АВТО-ОТКРЫТИЕ КЕЙСОВ =================
+local function openRandomCrate()
+    if isOpengingCrate then return false end
+    isOpengingCrate = true
+    
+    local boxId = CRATE_BOXES[math.random(1, #CRATE_BOXES)]
+    local success = false
+    
+    for _, currency in ipairs(CRATE_CURRENCIES) do
+        local ok, result = pcall(function()
+            return OpenCrate:InvokeServer(boxId, "MysteryBox", currency)
+        end)
+        
+        if ok and result then
+            pcall(function()
+                BoxController:Fire({{
+                    MysteryBoxId = boxId,
+                    RewardedItemId = result
+                }})
+            end)
+            print(string.format("📦 [CRATE] %s | %s | Выпало: %s", boxId, currency, tostring(result)))
+            success = true
+            break
+        end
+    end
+    
+    isOpengingCrate = false
+    return success
+end
+
+-- Отдельный поток для автооткрытия кейсов
+local function autoCrateLoop()
+    while SETTINGS.AutoOpenCrates and SETTINGS.Enabled do
+        wait(SETTINGS.CrateOpenDelay)
+        
+        -- Проверяем баланс: сданные монеты + текущий мешок
+        local currentBag = getBagCoins()
+        local totalCoins = depositedCoins + currentBag
+        
+        if totalCoins >= SETTINGS.MinCoinsForCrate then
+            print(string.format("💰 Баланс: %d монет → Открываю кейс!", totalCoins))
+            
+            local success = openRandomCrate()
+            
+            if success then
+                depositedCoins = depositedCoins - SETTINGS.MinCoinsForCrate
+                if depositedCoins < 0 then depositedCoins = 0 end
+                totalCratesOpened = totalCratesOpened + 1
+                print(string.format("📊 Всего открыто кейсов: %d | Остаток: %d монет", 
+                    totalCratesOpened, depositedCoins + getBagCoins()))
+            else
+                print("❌ Не удалось открыть кейс (нет валюты?)")
+            end
+        end
+    end
+end
+
 -- ================= 🛡️ ANTI-AFK =================
 spawn(function()
     while wait(120) do
@@ -376,15 +433,20 @@ spawn(function()
     end
 end)
 
--- ================= 🚀 ГЛАВНЫЙ ЦИКЛ =================
+-- ================= 🚀 ЗАПУСК =================
 setupRoundDetection()
+
+-- Запускаем поток авто-кейсов
+spawn(autoCrateLoop)
 
 local coinCounter = 0
 local lastTarget = nil
 
 spawn(function()
-    print("✅ AUTO FARM ACTIVE | Speed: " .. SETTINGS.MoveSpeed .. " | YOffset: " .. SETTINGS.YOffset)
-    print("🔌 Auto-Reconnect: GuiService + PlayerRemoving + Heartbeat")
+    print("✅ AUTO FARM + AUTO CRATE ACTIVE")
+    print("   Speed: " .. SETTINGS.MoveSpeed .. " | YOffset: " .. SETTINGS.YOffset)
+    print("   📦 Auto Crates: каждые " .. SETTINGS.MinCoinsForCrate .. " монет")
+    print("   🔌 Auto-Reconnect: GuiService + PlayerRemoving + Heartbeat")
     print("")
     
     while SETTINGS.Enabled do
@@ -428,6 +490,12 @@ spawn(function()
                 markCollected(coin)
                 lastTarget = nil
                 coinCounter = coinCounter + 1
+                
+                -- Логи каждые 10 монет
+                if coinCounter % 10 == 0 then
+                    print(string.format("💰 Собрано: %d монет | Мешок: %d/%d | Сдано: %d", 
+                        coinCounter, currentBag, SETTINGS.MaxBagCoins, depositedCoins))
+                end
                 return
             end
 
