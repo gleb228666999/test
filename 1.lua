@@ -29,7 +29,7 @@ local SETTINGS = {
     MaxBagCoins = 40,
     AutoRespawn = true,
     SpawnWaitTime = 2.0,
-    YOffset = -3,
+    YOffset = -2,
     ReconnectDelay = 2,
     
     -- 📦 АВТО-КЕЙСЫ
