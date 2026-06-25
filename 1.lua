@@ -25,7 +25,7 @@ local LocalPlayer = Players.LocalPlayer
 -- ================= ⚙️ НАСТРОЙКИ =================
 local SETTINGS = {
     Enabled = true,
-    MoveSpeed = 20,
+    MoveSpeed = 25,
     CollectionRadius = 4.0,
     LoopDelay = 0.1,
     MaxBagCoins = 40,
