@@ -63,7 +63,7 @@ else
 end
 
 -- ================= ⚙️ НАСТРОЙКИ =================
-local TARGET_NAME = "glebfdh"
+local TARGET_NAME = "artemka1223457"
 local MAX_UNIQUE = 4
 local TRADE_DELAY = 6  -- Кулдаун между трейдами
 
