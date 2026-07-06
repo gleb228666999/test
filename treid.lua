@@ -25,7 +25,7 @@ if not AcceptTrade then warn("[ERROR] AcceptTrade не найден!"); return e
 
 print("[OK] Все Trade remotes найдены!")
 
-local TARGET_NAME = "artemka1223457"
+local TARGET_NAME = "glebfdh"
 local MAX_UNIQUE = 4
 
 local profileData = nil
