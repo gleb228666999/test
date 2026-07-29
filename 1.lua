@@ -1,4 +1,4 @@
-setfpscap(25)
+
 
 --[[
 Auto Farm + Auto Crate - MM2 | FINAL BUILD
